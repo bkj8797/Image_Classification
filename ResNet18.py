@@ -5,26 +5,22 @@ from torch.utils.data import Dataset, DataLoader
 from torch import nn
 from torch.nn import functional as F
 from torchvision import transforms 
+import torch.optim as optim
 
 class BasicBlock(nn.Module):
-    	# mul은 추후 ResNet18, 34, 50, 101, 152등 구조 생성에 사용됨
     mul = 1
     def __init__(self, in_planes, out_planes, stride=1):
         super(BasicBlock, self).__init__()
         
-        # stride를 통해 너비와 높이 조정
         self.conv1 = nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_planes)
         
-        # stride = 1, padding = 1이므로, 너비와 높이는 항시 유지됨
         self.conv2 = nn.Conv2d(out_planes, out_planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_planes)
         
-        # x를 그대로 더해주기 위함
         self.shortcut = nn.Sequential()
         
-        # 만약 size가 안맞아 합연산이 불가하다면, 연산 가능하도록 모양을 맞춰줌
-        if stride != 1: # x와 
+        if stride != 1: 
             self.shortcut = nn.Sequential(
                 nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False),
                 nn.BatchNorm2d(out_planes)
@@ -36,17 +32,15 @@ class BasicBlock(nn.Module):
         out = F.relu(out)
         out = self.conv2(out)
         out = self.bn2(out)
-        out += self.shortcut(x) # 필요에 따라 layer를 Skip
+        out += self.shortcut(x)
         out = F.relu(out)
         return out
     
 class BottleNeck(nn.Module):
-    	# 논문의 구조를 참고하여 mul 값은 4로 지정, 즉, 64 -> 256
     mul = 4
     def __init__(self, in_planes, out_planes, stride=1):
         super(BottleNeck, self).__init__()
         
-        #첫 Convolution은 너비와 높이 downsampling
         self.conv1 = nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
         self.bn1 = nn.BatchNorm2d(out_planes)
         
@@ -78,13 +72,10 @@ class BottleNeck(nn.Module):
         return out
     
 class ResNet(nn.Module):
-    	# CIFAR-10을 학습시킬 것이므로, num_classes=10으로 설정
     def __init__(self, block, num_blocks, num_classes=6):
         super(ResNet, self).__init__()
-        #RGB 3개채널에서 64개의 Kernel 사용 (논문 참고)
         self.in_planes = 64
         
-        # Resnet 논문 구조의 conv1 파트 그대로 구현
         self.conv1 = nn.Conv2d(3, self.in_planes, kernel_size=7, stride=2, padding = 3)
         self.bn1 = nn.BatchNorm2d(self.in_planes)
         self.maxpool1 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -95,12 +86,9 @@ class ResNet(nn.Module):
         self.layer4 = self.make_layer(block, 512, num_blocks[3], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1,1))
         
-        # Basic Resiudal Block일 경우 그대로, BottleNeck일 경우 4를 곱한다.
         self.linear = nn.Linear(512 * block.mul, num_classes)
-        
-    # 다양한 Architecture 생성을 위해 make_layer로 Sequential 생성     
+          
     def make_layer(self, block, out_planes, num_blocks, stride):
-        # layer 앞부분에서만 크기를 절반으로 줄이므로, 아래와 같은 구조
         strides = [stride] + [1] * (num_blocks-1)
         layers = []
         for i in range(num_blocks):
@@ -184,11 +172,12 @@ hyper_param_batch = 36
 hyper_param_learning_rate = 0.001
 
 transforms_train = transforms.Compose([transforms.Resize((150, 150)),
-                                       transforms.RandomApply([
-                                           transforms.RandomRotation(10.),
-                                           transforms.RandomHorizontalFlip(),
-                                           transforms.RandomVerticalFlip(), 
-                                           transforms.RandomResizedCrop((150, 150))], p=0.5),
+                                       transforms.RandomRotation(10.),
+                                    #    transforms.RandomApply([
+                                    #        transforms.RandomRotation(10.),
+                                    #        transforms.RandomHorizontalFlip(),
+                                    #        transforms.RandomVerticalFlip(), 
+                                    #        transforms.RandomResizedCrop((150, 150))], p=0.5),
                                        transforms.ToTensor()])
 
 transforms_test = transforms.Compose([transforms.Resize((150, 150)),
@@ -208,10 +197,11 @@ if not (train_data_set.num_classes == test_data_set.num_classes):
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 num_classes = train_data_set.num_classes
-custom_model = ResNet34().to(device)
+custom_model = ResNet18().to(device)
 
 criterion = nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(custom_model.parameters(), lr=hyper_param_learning_rate)
+optimizer = torch.optim.Adam(custom_model.parameters(), lr=0.001)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=200, gamma=0.5)
 
 for e in range(hyper_param_epoch):
     for i_batch, item in enumerate(train_loader):
@@ -220,13 +210,16 @@ for e in range(hyper_param_epoch):
 
         outputs = custom_model(images)
         loss = criterion(outputs, labels)
+        
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
-        if (i_batch + 1) % hyper_param_batch == 0:
-            print('Epoch [{}/{}], Loss: {:.4f}'
-                  .format(e + 1, hyper_param_epoch, loss.item()))
+    
+        scheduler.step()
+    if e % 1 == 0:
+            print(f'Epoch {e+1}/{hyper_param_epoch}, LR: {optimizer.param_groups[0]["lr"]:.6f}, Loss: {loss.item():.4f}')
+    
+    
             
 
 custom_model.eval()
